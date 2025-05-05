@@ -20,33 +20,51 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         self.fact_history = []  # Danh sách các facts đã declare
         self.questions = []  # Danh sách các câu hỏi đã hỏi
         self.current_question = None  # Câu hỏi hiện tại đang hỏi
+        self.diagnosed_diseases = set()  # Tập hợp các bệnh đã được chẩn đoán
 
     def declare_fact(self, fact_name, fact_value):
         """Thêm fact vào hệ thống và lưu vào danh sách facts"""
+        # Kiểm tra xem fact đã tồn tại chưa
+        for fact in self.fact_history:
+            if fact[0] == fact_name and fact[1] == fact_value:
+                return True
+                
         self.declare(Fact(**{fact_name: fact_value}))
         self.fact_history.append((fact_name, fact_value))
         return True
 
     def suggest_disease(self, disease, symptoms):
         """Hiển thị kết quả chẩn đoán bệnh"""
+        # Kiểm tra xem bệnh đã được chẩn đoán chưa
+        if disease in self.diagnosed_diseases:
+            return
+            
+        self.diagnosed_diseases.add(disease)
+        
         st.success(f"Bạn có thể đang mắc bệnh **{disease}**")
         symptoms_text = '- ' + '\n- '.join(symptoms)
         st.write(f"Kết luận này dựa trên các triệu chứng của bạn trong số sau đây:\n{symptoms_text}")
         
         # Tạo key duy nhất cho các nút
-        info_key = f"info_{hash(disease)}"
-        restart_key = f"restart_{hash(disease)}"
+        info_key = f"info_{hash(disease)}_{hash(str(symptoms))}"
+        restart_key = f"restart_{hash(disease)}_{hash(str(symptoms))}"
+        
+        col1, col2 = st.columns(2)
         
         # Hiển thị nút để xem thêm thông tin về bệnh
-        if st.button(f"Xem thêm thông tin về bệnh {disease}", key=info_key):
+        if col1.button(f"Xem thêm thông tin về bệnh {disease}", key=info_key):
             webbrowser.open(f"Treatment/html/{disease}.html", new=2)
         
         # Hiển thị nút để bắt đầu lại
-        if st.button("Bắt đầu lại", key=restart_key):
+        if col2.button("Bắt đầu lại", key=restart_key):
             st.session_state.clear()
+            self.diagnosed_diseases.clear()
             st.rerun()
+            
+        # Dừng chương trình sau khi chẩn đoán
+        st.stop()
 
-    def ask_question(self, question_text, options=None, question_type="yes_no"):
+    def ask_question(self, question_text, options=None, question_type="yes_no", single_select=False):
         """Hiển thị câu hỏi trên giao diện Streamlit và nhận phản hồi"""
         if options is None:
             options = []
@@ -85,22 +103,35 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         elif question_type == "multi_select":
             st.subheader(question_text)
             
-            # Tạo key duy nhất cho multiselect
+            # Tạo key duy nhất cho selectbox/multiselect
             select_key = f"select_{question_key}"
             submit_key = f"submit_{question_key}"
             
-            selected_options = st.multiselect(
-                "Chọn tất cả các lựa chọn phù hợp:",
-                options,
-                key=select_key
-            )
-            
-            if st.button("Xác nhận", key=submit_key):
-                if not selected_options:
-                    st.session_state[question_key] = ["không có"]
-                else:
-                    st.session_state[question_key] = selected_options
-                st.rerun()
+            if single_select:
+                # Sử dụng selectbox cho câu hỏi chỉ chọn một đáp án
+                selected_option = st.selectbox(
+                    "Chọn một lựa chọn phù hợp:",
+                    options,
+                    key=select_key
+                )
+                
+                if st.button("Xác nhận", key=submit_key):
+                    st.session_state[question_key] = [selected_option]
+                    st.rerun()
+            else:
+                # Sử dụng multiselect cho câu hỏi chọn nhiều đáp án
+                selected_options = st.multiselect(
+                    "Chọn tất cả các lựa chọn phù hợp:",
+                    options,
+                    key=select_key
+                )
+                
+                if st.button("Xác nhận", key=submit_key):
+                    if not selected_options:
+                        st.session_state[question_key] = ["không có"]
+                    else:
+                        st.session_state[question_key] = selected_options
+                    st.rerun()
             
             # Nếu chưa có câu trả lời, dừng thực thi
             if question_key not in st.session_state:
@@ -114,11 +145,11 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         """Wrapper cho phương thức ask_question với loại câu hỏi yes_no"""
         return self.ask_question(input_str, question_type="yes_no")
 
-    def multi_input(self, input_str, options=[]):
+    def multi_input(self, input_str, options=[], single_select=False):
         """Wrapper cho phương thức ask_question với loại câu hỏi multi_select"""
         options_with_none = options.copy()
         options_with_none.append("không có")
-        return self.ask_question(input_str, options=options_with_none, question_type="multi_select")
+        return self.ask_question(input_str, options=options_with_none, question_type="multi_select", single_select=single_select)
 
     @DefFacts()
     def _initial_action_(self):
@@ -161,7 +192,7 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         self.declare_fact("appetite_loss", appetite_loss)
         
         fever_options = ["Sốt Thường", "Sốt Nhẹ", "Sốt Cao"]
-        fevers = self.multi_input("Bạn có bị sốt không?", fever_options)
+        fevers = self.multi_input("Bạn có bị sốt không?", fever_options, single_select=True)
         if fevers[0] != "không có":
             self.declare_fact("fever", "có")
             for f in fevers:
@@ -177,7 +208,7 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         joint_pain = self.yes_no("Bạn có đau khớp không?")
         self.declare_fact("joint_pain", joint_pain)
         
-        vomits = self.multi_input("Bạn có bị nôn không?", ["Nôn Nhiều", "Nôn Thường"])
+        vomits = self.multi_input("Bạn có bị nôn không?", ["Nôn Nhiều", "Nôn Thường"], single_select=True)
         if vomits[0] != "không có":
             self.declare_fact("vomit", "có")
             for v in vomits:
@@ -494,11 +525,21 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
 
     @Rule(OR(Fact(eye_crusting="có"), Fact(eye_burn="có")), salience=1000)
     def disease_Conjunctivitis(self):
+        # Kiểm tra xem đã chẩn đoán bệnh này chưa
+        if "diagnosis_Conjunctivitis" in st.session_state:
+            return
+            
+        st.session_state["diagnosis_Conjunctivitis"] = True
         symptoms = ["Cảm giác nóng rát ở mắt", "Đóng vảy ở mắt", "Đỏ mắt"]
         self.suggest_disease("Viêm Kết Mạc", symptoms)
 
     @Rule(Fact(eye_irritation="có"), salience=900)
     def disease_EyeAllergy(self):
+        # Kiểm tra xem đã chẩn đoán bệnh này chưa
+        if "diagnosis_EyeAllergy" in st.session_state:
+            return
+            
+        st.session_state["diagnosis_EyeAllergy"] = True
         symptoms = ["Kích ứng mắt", "Đỏ mắt"]
         self.suggest_disease("Dị Ứng Mắt", symptoms)
 
@@ -691,4 +732,6 @@ if __name__ == "__main__":
     engine.reset()
     engine.run()
     
-    st.warning("Các triệu chứng không khớp với bất kỳ bệnh nào trong cơ sở dữ liệu của tôi.")
+    # Chỉ hiển thị thông báo này nếu không có bệnh nào được chẩn đoán
+    if not engine.diagnosed_diseases:
+        st.warning("Các triệu chứng không khớp với bất kỳ bệnh nào trong cơ sở dữ liệu của tôi.")
