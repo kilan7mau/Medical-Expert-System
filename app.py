@@ -1,12 +1,8 @@
 import streamlit as st
-import webbrowser
-import sys
-import os
 from experta import *
-import base64
-from io import BytesIO
 import pyswip
 import unicodedata
+import streamlit.components.v1 as components
 
 # Khởi tạo Prolog engine
 prolog = pyswip.Prolog()
@@ -40,6 +36,7 @@ DISEASE_NAMES = {
 
 # Dictionary chuyển đổi triệu chứng từ tiếng Anh sang tiếng Việt
 SYMPTOM_NAMES = {
+    "red_eyes": "Mắt đỏ",
     "appetite_loss": "Mất cảm giác thèm ăn",
     "fever": "Sốt",
     "short_breath": "Khó thở",
@@ -140,10 +137,12 @@ SYMPTOM_NAMES = {
     "lose_smell": "Mất vị giác/khứu giác"
 }
 
+
 def remove_accents(input_str):
     """Chuyển đổi chuỗi tiếng Việt thành không dấu"""
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
 
 def convert_to_prolog_fact(fact_name):
     """Chuyển đổi tên fact thành định dạng phù hợp với Prolog"""
@@ -155,12 +154,14 @@ def convert_to_prolog_fact(fact_name):
     fact_name = ''.join(c for c in fact_name if c.isalnum() or c == '_')
     return fact_name
 
+
 def convert_symptom_to_vietnamese(symptom):
     """Chuyển đổi triệu chứng từ tiếng Anh sang tiếng Việt"""
     # Loại bỏ dấu ngoặc và giá trị yes/no
     symptom = str(symptom).split('(')[0].strip()
     # Chuyển đổi sang tiếng Việt nếu có trong dictionary
     return SYMPTOM_NAMES.get(symptom, symptom)
+
 
 # Import các lớp và hàm từ expert.py
 # Khi sử dụng các lớp và hàm từ expert.py, ta sẽ giữ nguyên logic chính, 
@@ -177,6 +178,9 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         self.questions = []  # Danh sách các câu hỏi đã hỏi
         self.current_question = None  # Câu hỏi hiện tại đang hỏi
         self.diagnosed_diseases = set()  # Tập hợp các bệnh đã được chẩn đoán
+
+    def translate_word(self, word, dictionary):
+        return dictionary.get(word.title(), "unknown")
 
     def declare_fact(self, fact_name, fact_value):
         """Thêm fact vào hệ thống và lưu vào danh sách facts"""
@@ -209,7 +213,35 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
 
         # Hiển thị nút để xem thêm thông tin về bệnh
         if col1.button(f"Xem thêm thông tin về bệnh {disease}", key=info_key):
-            webbrowser.open(f"Treatment/html/{disease}.html", new=2)
+            disease_dict = {
+                "Hội Chứng Suy Giảm Miễn Dịch Mắc Phải": "AIDS",
+                "Thiếu Máu": "Anemia",
+                "Viêm Khớp": "Arthritis",
+                "Hen Suyễn": "Asthma",
+                "Viêm Phế Quản": "Bronchitis",
+                "Viêm Kết Mạc": "Conjunctivitis",
+                "Virus Corona": "Corona Virus",
+                "Xơ Vữa Động Mạch Vành": "Coronary Atherosclerosis",
+                "Mất Nước": "Dehydration",
+                "Sốt Xuất Huyết": "Dengue",
+                "Đái Tháo Đường": "Diabetes",
+                "Dị Ứng Mắt": "Eye Allergy",
+                "Viêm Dạ Dày": "Gastritis",
+                "Viêm Gan": "Hepatitis",
+                "Suy Giáp": "Hypothyroidism",
+                "Cúm": "Influenza",
+                "Sốt Rét": "Malaria",
+                "Béo Phì": "Obesity",
+                "Viêm Tụy": "Pancreatitis",
+                "Loét Dạ Dày": "Peptic Ulcer",
+                "Viêm Phổi": "Pneumonia",
+                "Lao": "Tuberculosis",
+            }
+            disease_en = self.translate_word(disease, disease_dict)
+            with open(f"Treatment/html/{disease_en}.html", "r", encoding="utf-8") as f:
+                html_content = f.read()
+            with st.expander(f"📖 Thông tin chi tiết về {disease}"):
+                components.html(html_content, height=600, scrolling=True)
 
         # Hiển thị nút để bắt đầu lại
         if col2.button("Bắt đầu lại", key=restart_key):
@@ -309,33 +341,40 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
                                  single_select=single_select)
 
     def check_disease_rules(self):
-        """Kiểm tra các luật bệnh từ knowledge.pl"""
-        for fact in self.fact_history:
-            fact_name, fact_value = fact
-            # Chuyển đổi tên fact thành định dạng phù hợp với Prolog
+        """Kiểm tra các luật bệnh từ knowledge.pl dựa vào triệu chứng của người dùng"""
+
+        # Đưa các facts (symptom(có/không)) vào hệ Prolog
+        for fact_name, fact_value in self.fact_history:
             prolog_fact_name = convert_to_prolog_fact(fact_name)
-            # Chuyển đổi giá trị "có"/"không" thành "yes"/"no" cho Prolog
             prolog_value = "yes" if fact_value == "có" else "no"
             try:
                 prolog.assertz(f"{prolog_fact_name}({prolog_value})")
             except Exception as e:
                 st.error(f"Lỗi khi thêm fact {fact_name}: {str(e)}")
 
-        # Kiểm tra từng luật bệnh
-        for disease in ["arthritis", "peptic_ulcer", "gastritis", "diabetes", "dehydration", 
-                       "hypothyroidism", "obesity", "anemia", "cad", "asthma", "dengue", 
-                       "bronchitis", "conjunctivitis", "eye_allergy", "tb", "influenza", 
-                       "hepatitis", "pneumonia", "malaria", "hiv", "pancreatitis", "corona"]:
+        # Tập hợp các triệu chứng người dùng xác nhận là "có"
+        user_symptoms = [
+            f"{convert_to_prolog_fact(name)}({'yes' if value == 'có' else 'no'})"
+            for name, value in self.fact_history
+        ]
+        # Lặp qua từng luật bệnh
+        for disease in DISEASE_NAMES:
             try:
-                # Kiểm tra xem có luật nào khớp không
-                if list(prolog.query(f"rule({disease}, _)")):
-                    # Lấy danh sách triệu chứng từ luật
-                    symptoms = list(prolog.query(f"rule({disease}, Symptoms)"))[0]["Symptoms"]
-                    # Chuyển đổi tên bệnh sang tiếng Việt
+                # Truy vấn danh sách triệu chứng cần thiết cho bệnh
+                result = list(prolog.query(f"rule({disease}, Symptoms)"))
+                if not result:
+                    continue
+
+                disease_symptoms = set(result[0]["Symptoms"])
+                # Kiểm tra nếu người dùng có đầy đủ triệu chứng này
+                if disease_symptoms.issubset(user_symptoms):
+                    symptoms_list = [
+                        convert_symptom_to_vietnamese(symptom)
+                        for symptom in disease_symptoms
+                    ]
                     disease_name = DISEASE_NAMES.get(disease, disease)
-                    # Chuyển đổi triệu chứng sang tiếng Việt
-                    symptoms_list = [convert_symptom_to_vietnamese(symptom) for symptom in symptoms]
                     self.suggest_disease(disease_name, symptoms_list)
+
             except Exception as e:
                 st.error(f"Lỗi khi kiểm tra bệnh {disease}: {str(e)}")
 
@@ -399,6 +438,8 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
                 self.askRelatedToAppetiteLoss()
             elif fatigue == "có" and short_breath == "không":
                 self.askRelatedToFatigue()
+        if red_eyes == "có":
+            self.askEyeStatus()
 
     def askRelatedToFever(self):
         st.header("Câu hỏi liên quan đến sốt thường")
@@ -423,45 +464,45 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
 
         # Kiểm tra điều kiện cho viêm phổi theo đúng logic trong expert.py
         if any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-           chest_pain == "có" and \
-           any(f[0] == "short_breath" and f[1] == "có" for f in self.fact_history) and \
-           nausea == "có":
+                chest_pain == "có" and \
+                any(f[0] == "short_breath" and f[1] == "có" for f in self.fact_history) and \
+                nausea == "có":
             self.askPneumonia()
         # Kiểm tra điều kiện cho bệnh lao
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             chest_pain == "có" and \
-             any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
-             chills == "có":
+                chest_pain == "có" and \
+                any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
+                chills == "có":
             self.askTB()
         # Kiểm tra điều kiện cho cúm
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
-             sore_throat == "có":
+                any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
+                sore_throat == "có":
             self.askInfluenza()
         # Kiểm tra điều kiện cho viêm gan
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
-             abdominal_pain == "có":
+                any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
+                abdominal_pain == "có":
             self.askHepatitis()
         # Kiểm tra điều kiện cho sốt rét
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             chills == "có" and \
-             abdominal_pain == "có" and \
-             nausea == "có":
+                chills == "có" and \
+                abdominal_pain == "có" and \
+                nausea == "có":
             self.askMalaria()
         # Kiểm tra điều kiện cho AIDS
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             rashes == "có":
+                rashes == "có":
             self.askHIV()
         # Kiểm tra điều kiện cho viêm tụy
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             nausea == "có":
+                nausea == "có":
             self.askPancreatitis()
         # Kiểm tra điều kiện cho COVID-19
         elif any(f[0] == "Sốt_Thường" and f[1] == "có" for f in self.fact_history) and \
-             any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
-             any(f[0] == "short_breath" and f[1] == "có" for f in self.fact_history) and \
-             nausea == "có":
+                any(f[0] == "fatigue" and f[1] == "có" for f in self.fact_history) and \
+                any(f[0] == "short_breath" and f[1] == "có" for f in self.fact_history) and \
+                nausea == "có":
             self.askCorona()
 
     def askRelatedToAppetiteLoss(self):
@@ -548,12 +589,13 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         # Kiểm tra điều kiện để chẩn đoán tiểu đường
         count = 0
         for fact in self.fact_history:
-            if fact[0] in ["frequent_urination", "weight_loss", "irratabiliry", "blurred_vision", "frequent_infections", "sores"] and fact[1] == "có":
+            if fact[0] in ["frequent_urination", "weight_loss", "irratabiliry", "blurred_vision", "frequent_infections",
+                           "sores"] and fact[1] == "có":
                 count += 1
 
         if count >= 4:
-            symptoms = ["Mệt mỏi", "Khát nước nhiều", "Đói nhiều", "Sụt cân", "Thị lực mờ", 
-                       "Nhiễm trùng thường xuyên", "Đi tiểu thường xuyên", "Dễ cáu gắt", "Vết thương lâu lành"]
+            symptoms = ["Mệt mỏi", "Khát nước nhiều", "Đói nhiều", "Sụt cân", "Thị lực mờ",
+                        "Nhiễm trùng thường xuyên", "Đi tiểu thường xuyên", "Dễ cáu gắt", "Vết thương lâu lành"]
             self.suggest_disease("Tiểu Đường", symptoms)
         else:
             self.check_disease_rules()
@@ -628,7 +670,8 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
         isolated = self.yes_no("Bạn có cảm thấy bị cô lập không?")
         self.declare_fact("isolated", isolated)
 
-        confidence = self.yes_no("Bạn có cảm thấy thiếu tự tin và lòng tự trọng thấp trong các hoạt động hàng ngày không?")
+        confidence = self.yes_no(
+            "Bạn có cảm thấy thiếu tự tin và lòng tự trọng thấp trong các hoạt động hàng ngày không?")
         self.declare_fact("confidence", confidence)
 
         self.check_disease_rules()
@@ -656,7 +699,8 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
     def askCAD(self):
         st.header("Câu hỏi về xơ vữa động mạch vành")
 
-        heaviness = self.yes_no("Bạn có cảm giác nặng nề hoặc thắt ngực, thường ở vùng trung tâm của ngực, có thể lan ra cánh tay, cổ, hàm, lưng hoặc dạ dày không?")
+        heaviness = self.yes_no(
+            "Bạn có cảm giác nặng nề hoặc thắt ngực, thường ở vùng trung tâm của ngực, có thể lan ra cánh tay, cổ, hàm, lưng hoặc dạ dày không?")
         self.declare_fact("heaviness", heaviness)
 
         sweating = self.yes_no("Bạn có đổ mồ hôi thường xuyên không?")
@@ -801,7 +845,8 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
     def askPneumonia(self):
         st.header("Câu hỏi về viêm phổi")
 
-        short_breath_severe = self.yes_no("Bạn có cảm thấy khó thở khi làm các hoạt động bình thường hoặc thậm chí khi nghỉ ngơi không?")
+        short_breath_severe = self.yes_no(
+            "Bạn có cảm thấy khó thở khi làm các hoạt động bình thường hoặc thậm chí khi nghỉ ngơi không?")
         self.declare_fact("short_breath_severe", short_breath_severe)
 
         sweat = self.yes_no("Bạn có bị đổ mồ hôi cùng với ớn lạnh không?")
@@ -823,8 +868,8 @@ class HeThongChuanDoanYTe(KnowledgeEngine):
                 count += 1
 
         if count >= 3:
-            symptoms = ["Sốt", "Đau ngực", "Khó thở", "Buồn nôn", "Đổ mồ hôi kèm ớn lạnh", 
-                       "Thở nhanh", "Ho có đờm", "Tiêu chảy"]
+            symptoms = ["Sốt", "Đau ngực", "Khó thở", "Buồn nôn", "Đổ mồ hôi kèm ớn lạnh",
+                        "Thở nhanh", "Ho có đờm", "Tiêu chảy"]
             self.suggest_disease("Viêm Phổi", symptoms)
         else:
             self.check_disease_rules()
